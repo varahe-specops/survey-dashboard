@@ -258,7 +258,7 @@ def generate_combined_ac_pdf(df_full_data, list_of_acs_to_process, selected_ques
             pdf.set_font("Helvetica", "", 12)
             pdf.cell(0, 10, "No tables could be generated for this AC.", ln=True, align="L")
 
-    return pdf.output(dest='S').encode('latin-1') # Return PDF as bytes
+    return pdf.output(dest='B') # Return PDF as bytes
 
 df_survey_original = load_data(GOOGLE_SHEET_CSV_URL)
 
