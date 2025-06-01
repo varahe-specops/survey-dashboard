@@ -90,7 +90,6 @@ def create_pdf_section_for_ac(pdf, ac_name, selected_question_text, tables_data)
         pdf.set_fill_color(240, 240, 240) # Light grey for alternating rows
         fill_row = False
         for _, row in table_df.iterrows():
-            is_first_col_in_row = True
             for idx, item in enumerate(row):
                 current_col_width = col_widths[idx] if idx < len(col_widths) else (available_width / num_cols)
                 # Check if item is numeric (int or float) to align right, else left
@@ -98,16 +97,17 @@ def create_pdf_section_for_ac(pdf, ac_name, selected_question_text, tables_data)
                 # If it's a percentage string, also align right
                 if isinstance(item, str) and '%' in item:
                     align = 'R'
-
+        
                 # For the "Grand Total" row, make text bold
-                if str(row[0]) == "Grand Total": # Assuming first column indicates the category
-                    pdf.set_font("Helvetica", "B", 8)
+                if str(row.iloc[0]) == "Grand Total": # Using iloc[0] instead of row[0]
+                    pdf.set_font("Arial", "B", 8)  # Use Arial instead of Helvetica
                 else:
-                    pdf.set_font("Helvetica", "", 8)
-
-                pdf.multi_cell(current_col_width, row_height, str(item), border=1, fill=fill_row, align=align, ln=3 if is_first_col_in_row else 0)
-                is_first_col_in_row = False
-            pdf.ln(row_height) # Ensure this moves down correctly after multi_cell rows
+                    pdf.set_font("Arial", "", 8)   # Use Arial instead of Helvetica
+        
+                # Use regular cell instead of multi_cell for table consistency
+                pdf.cell(current_col_width, row_height, str(item), border=1, fill=fill_row, align=align)
+            
+            pdf.ln(row_height) # Move to next row
             fill_row = not fill_row # Alternate row fill
         pdf.ln(5) # Space after table
     pdf.set_font("Helvetica", "", 10) # Reset font
