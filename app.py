@@ -13,6 +13,7 @@ def load_data(url):
     try:
         df = pd.read_csv(url)
         df.columns = df.columns.str.strip()
+        print(df.columns.tolist()) # Print column names
         for col in df.select_dtypes(include=['object']):
             df[col] = df[col].str.strip()
         return df
@@ -27,6 +28,7 @@ st.title("Survey Data Analysis")
 
 if df_survey_original.empty:
     st.warning("Could not load survey data. Please check the Google Sheet URL and ensure it's published correctly.")
+    st.stop() # Stop execution if data is not loaded
 else:
     # --- Define Columns for Selections ---
     survey_question_columns = [
@@ -51,27 +53,114 @@ else:
         if actual in df_survey_original.columns
     }
 
-    # --- Main Selectors ---
-    col_q, col_ac = st.columns(2)
+    # --- Early definition of selected_question for State Level Overview ---
+    # This selector will also be used for the AC-level view later
+    selected_question = st.selectbox(
+        "Select Survey Question (for all analyses below)",
+        options=survey_question_columns,
+        index=0 if survey_question_columns else None,
+        key="survey_question_selector"
+    )
 
-    with col_q:
-        selected_question = st.selectbox(
-            "Select Survey Question",
-            options=survey_question_columns,
-            index=0 if survey_question_columns else None,
-            key="survey_question_selector"
+    # --- Determine Response Columns for the selected question (using df_survey_original) ---
+    # This needs to be defined early for the state-level summary
+    response_columns_ordered = []
+    if selected_question and selected_question in df_survey_original.columns:
+        if selected_question == "Do you know who the KPCC President is?":
+            response_columns_ordered = ['No', 'Yes']
+            unique_responses_in_data = df_survey_original[selected_question].fillna("Not Answered").astype(str).unique()
+            if "Not Answered" in unique_responses_in_data and "Not Answered" not in response_columns_ordered:
+                response_columns_ordered.append("Not Answered")
+        else:
+            response_columns_ordered = sorted(df_survey_original[selected_question].fillna("Not Answered").astype(str).unique().tolist())
+    elif not selected_question:
+        st.info("Please select a survey question to see the analysis.")
+        st.stop()
+    else: # selected_question is not in df_survey_original.columns (should not happen with current logic)
+        st.error(f"Selected question '{selected_question}' not found in the data. Please check column names.")
+        st.stop()
+
+
+    # --- State Level Overview ---
+    st.header("State Level Overview")
+    if not df_survey_original.empty and selected_question:
+        st.subheader(f"Summary for: {selected_question}")
+        total_respondents_state = len(df_survey_original)
+
+        state_summary_data = []
+        if total_respondents_state > 0:
+            question_responses_state = df_survey_original[selected_question].fillna("Not Answered").astype(str)
+            counts_state = question_responses_state.value_counts()
+
+            for resp_option in response_columns_ordered:
+                count = counts_state.get(resp_option, 0)
+                percentage = (count / total_respondents_state * 100) if total_respondents_state > 0 else 0
+                state_summary_data.append({
+                    "Response": resp_option,
+                    "Count": count,
+                    "Percentage": f"{percentage:.2f}%"
+                })
+
+        if state_summary_data:
+            state_summary_df = pd.DataFrame(state_summary_data)
+            st.dataframe(state_summary_df, use_container_width=True, hide_index=True)
+        else:
+            st.write("No response data to display for the selected question at the state level.")
+
+    else:
+        st.write("No data available for state overview or no question selected.")
+    st.markdown("---") # Separator after state-level overview
+
+    # --- Placeholder for Navigation Path Selection ---
+    st.markdown("##### Intended Data Navigation Path")
+    st.radio(
+        "Select your preferred drill-down path (will be enabled when data is available):",
+        options=[
+            "State ➔ Zone ➔ District ➔ AC",
+            "State ➔ District ➔ AC",
+            "State ➔ AC Name"
+        ],
+        index=2,  # Default to "State -> AC Name" as it's the current de facto path
+        disabled=True,
+        help="Full navigation options will be enabled when Zone and District data columns are provided in the Google Sheet."
+    )
+    # Adding a little space before the next set of placeholders
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # --- Placeholder Filters for Zone and District ---
+    st.info("Zone and District level filtering will be enabled when corresponding columns are available in the Google Sheet.")
+
+    col_zone_district_placeholder1, col_zone_district_placeholder2 = st.columns(2)
+    with col_zone_district_placeholder1:
+        st.selectbox(
+            "Select Zone",
+            ["N/A - Zone data not available in source"],
+            disabled=True,
+            help="Zone-level filtering will be enabled when 'Zone' data is provided in the Google Sheet."
         )
+    with col_zone_district_placeholder2:
+        st.selectbox(
+            "Select District",
+            ["N/A - District data not available in source"],
+            disabled=True,
+            help="District-level filtering will be enabled when 'District' data is provided in the Google Sheet."
+        )
+    # st.markdown("---") # Optional: Add a separator if more distinct visual separation is needed before AC selection
+
+    # --- AC Selection ---
+    # Note: selected_question is already defined above
+    st.subheader("Filtered Analysis by Assembly Constituency") # Added a subheader for clarity
 
     ac_options = ["All"] + sorted(df_survey_original["AC Name"].unique().tolist()) if "AC Name" in df_survey_original.columns else ["All"]
-    with col_ac:
-        selected_acs = st.multiselect(
-            "Select Assembly Constituency (select 'All' for overall, or multiple individual ACs)",
-            options=ac_options,
-            default=["All"],
-            key="ac_multiselect"
-        )
+    # AC selector is not in columns anymore, as selected_question was moved up.
+    selected_acs = st.multiselect(
+        "Select Assembly Constituency (select 'All' for overall, or multiple individual ACs)",
+        options=ac_options,
+        default=["All"],
+        key="ac_multiselect"
+    )
     
-    st.markdown("---")
+    # st.markdown("---") # Removed this extra separator, one above is enough
 
     # --- Filtering Data based on AC ---
     current_df = df_survey_original.copy()
@@ -94,30 +183,19 @@ else:
         ac_header_display = "All Constituencies (Default - None Selected)"
         # current_df remains df_survey_original.copy()
 
-    # --- Display Header ---
-    if selected_question:
-        st.markdown(f"## {selected_question}")
-        st.markdown(f"#### Constituency: {ac_header_display}")
-        st.markdown("---")
-    else:
-        st.info("Please select a survey question.")
-        st.stop()
+    # --- Display Header for AC-Specific Analysis ---
+    if selected_question: # selected_question is already guaranteed to be defined here
+        # The overall question is displayed in the state summary,
+        # here we just need to specify the AC context.
+        st.markdown(f"#### Constituency Filter: {ac_header_display}")
+        # st.markdown("---") # Removed this separator, as tables will follow directly
+    # No need for an else here to stop, as selected_question is handled earlier.
 
-    # --- Determine Response Columns for the selected question ---
-    # For the specific KPCC question, we prioritize "No" and "Yes" as per the image
-    if selected_question == "Do you know who the KPCC President is?":
-        response_columns_ordered = ['No', 'Yes']
-        # Add 'Not Answered' if it exists in the data for this question after filtering
-        unique_responses_in_data = current_df[selected_question].fillna("Not Answered").astype(str).unique()
-        if "Not Answered" in unique_responses_in_data and "Not Answered" not in response_columns_ordered:
-             response_columns_ordered.append("Not Answered")
-    else:
-        # For other questions, take all unique responses, sort them for consistency
-        # (or you could take top N, etc.)
-        response_columns_ordered = sorted(current_df[selected_question].fillna("Not Answered").astype(str).unique().tolist())
-
+    # Note: response_columns_ordered is already defined globally using df_survey_original.
+    # It will be used for consistency in tables below.
 
     # --- Pre-calculate Grand Total row data (based on current_df and selected_question) ---
+    # This grand_total_row_data is for the *potentially filtered* current_df (AC specific)
     grand_total_row_data = {}
     if not current_df.empty:
         grand_total_base_count = len(current_df) # Total respondents in filtered ACs
