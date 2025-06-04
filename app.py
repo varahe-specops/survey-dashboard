@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+from fpdf import FPDF
+import io
 
 # --- Configuration ---
 st.set_page_config(layout="wide", page_title="Survey Data Analysis")
@@ -21,6 +23,86 @@ def load_data(url):
         return pd.DataFrame()
 
 df_survey_original = load_data(GOOGLE_SHEET_CSV_URL)
+
+
+def _generate_table_df(df_ac, selected_question, demo_display_name, demo_actual_col, response_columns_ordered):
+    """Create the cross tabulation table dataframe for one AC and demographic."""
+    df_for_crosstab = df_ac.copy()
+    df_for_crosstab[selected_question] = df_for_crosstab[selected_question].fillna("Not Answered").astype(str)
+    df_for_crosstab[demo_actual_col] = df_for_crosstab[demo_actual_col].fillna("Not Specified").astype(str)
+    if df_for_crosstab.empty:
+        return pd.DataFrame()
+
+    crosstab_df = pd.crosstab(df_for_crosstab[demo_actual_col], df_for_crosstab[selected_question])
+    for resp in response_columns_ordered:
+        if resp not in crosstab_df.columns:
+            crosstab_df[resp] = 0
+    crosstab_df = crosstab_df[response_columns_ordered]
+    crosstab_df["Total Number"] = crosstab_df.sum(axis=1)
+
+    for resp in response_columns_ordered:
+        perc_col = f"{resp} %"
+        crosstab_df[perc_col] = (crosstab_df[resp] / crosstab_df["Total Number"].replace(0, pd.NA) * 100)
+
+    crosstab_df = crosstab_df.reset_index()
+    crosstab_df.rename(columns={demo_actual_col: demo_display_name}, inplace=True)
+
+    display_cols_final_order = [demo_display_name, "Total Number"] + [f"{resp} %" for resp in response_columns_ordered]
+    table_df_final = crosstab_df[display_cols_final_order].copy()
+
+    grand_total_base_count = len(df_ac)
+    grand_total_row = {demo_display_name: "Grand Total", "Total Number": grand_total_base_count}
+    counts = df_ac[selected_question].fillna("Not Answered").astype(str).value_counts()
+    for resp in response_columns_ordered:
+        count = counts.get(resp, 0)
+        perc = (count / grand_total_base_count * 100) if grand_total_base_count > 0 else 0
+        grand_total_row[f"{resp} %"] = perc
+
+    for col in table_df_final.columns:
+        if col not in grand_total_row:
+            grand_total_row[col] = pd.NA
+    grand_total_df = pd.DataFrame([grand_total_row])[table_df_final.columns]
+    table_df_final = pd.concat([table_df_final, grand_total_df], ignore_index=True)
+
+    for resp in response_columns_ordered:
+        perc_col = f"{resp} %"
+        table_df_final[perc_col] = table_df_final[perc_col].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else x)
+    return table_df_final
+
+
+def create_combined_ac_pdf(df, selected_question, demographics):
+    """Generate a PDF with tables for each AC in the DataFrame."""
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    if selected_question == "Do you know who the KPCC President is?":
+        response_columns_ordered = ["No", "Yes"]
+        unique_responses = df[selected_question].fillna("Not Answered").astype(str).unique()
+        if "Not Answered" in unique_responses and "Not Answered" not in response_columns_ordered:
+            response_columns_ordered.append("Not Answered")
+    else:
+        response_columns_ordered = sorted(df[selected_question].fillna("Not Answered").astype(str).unique())
+
+    for ac in sorted(df["AC Name"].dropna().unique()):
+        ac_df = df[df["AC Name"] == ac]
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 16)
+        pdf.cell(0, 10, f"Constituency: {ac}", ln=True)
+
+        for demo_display, demo_actual_col in demographics.items():
+            if demo_actual_col not in ac_df.columns:
+                continue
+            table_df = _generate_table_df(ac_df, selected_question, demo_display, demo_actual_col, response_columns_ordered)
+            if table_df.empty:
+                continue
+            pdf.set_font("Arial", "B", 12)
+            pdf.cell(0, 10, demo_display, ln=True)
+            pdf.set_font("Courier", size=8)
+            table_text = table_df.to_string(index=False)
+            pdf.multi_cell(0, 4, table_text)
+            pdf.ln(2)
+
+    return pdf.output(dest="S").encode("latin-1")
 
 # --- Dashboard UI ---
 st.title("Survey Data Analysis")
@@ -207,3 +289,15 @@ else:
         except Exception as e:
             st.error(f"Could not generate table for {demo_display_name}: {e}")
         st.markdown("---") # Separator between tables
+
+    # --- Download Combined PDF Button ---
+    if st.button("Download Combined AC PDF"):
+        with st.spinner("Generating PDF..."):
+            pdf_bytes = create_combined_ac_pdf(current_df, selected_question, demographic_cols_for_tables)
+        st.download_button(
+            label="Click to Download",
+            data=pdf_bytes,
+            file_name="ac_tables.pdf",
+            mime="application/pdf",
+        )
+
